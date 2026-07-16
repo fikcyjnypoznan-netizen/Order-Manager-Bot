@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { startBot } from "./bot/index.js";
 
 const rawPort = process.env["PORT"];
 
@@ -14,6 +15,11 @@ const port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
+
+// Start Discord bot (non-blocking — server starts regardless)
+startBot().catch((err) => {
+  logger.error({ err }, "Bot Discord nie uruchomił się");
+});
 
 app.listen(port, (err) => {
   if (err) {
