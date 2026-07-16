@@ -29,6 +29,7 @@ export const ordersTable = pgTable("orders", {
   customerFullName: text("customer_full_name").notNull(),
   pesel: text("pesel").notNull(),
   deliveryAddress: text("delivery_address"),
+  price: text("price"),
   workerId: text("worker_id"),
   workerName: text("worker_name"),
   courierId: text("courier_id"),

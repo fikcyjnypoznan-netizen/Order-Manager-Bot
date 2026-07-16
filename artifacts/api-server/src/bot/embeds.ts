@@ -40,6 +40,10 @@ export function buildOrderEmbed(order: Order): EmbedBuilder {
     .setTimestamp(order.createdAt)
     .setFooter({ text: `ID: ${order.id}` });
 
+  if (order.price) {
+    embed.addFields({ name: "💰 Kwota", value: order.price, inline: true });
+  }
+
   if (order.orderType === "na_dostawe" && order.deliveryAddress) {
     embed.addFields({ name: "📍 Adres dostawy", value: order.deliveryAddress, inline: false });
   }

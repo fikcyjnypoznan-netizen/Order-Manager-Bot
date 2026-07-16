@@ -16,7 +16,7 @@ import { logger } from "../lib/logger.js";
 
 const ORDERS_CHANNEL_ID = process.env["DISCORD_ORDERS_CHANNEL_ID"];
 
-// ─── /zamow — shows modal form ───────────────────────────────────────────────
+// ─── /zamow — shows customer form modal ──────────────────────────────────────
 
 export async function handleZamow(
   interaction: ChatInputCommandInteraction,
@@ -77,13 +77,11 @@ export async function handleZamow(
   await interaction.showModal(modal);
 }
 
-// ─── Modal submit — creates the order ────────────────────────────────────────
+// ─── Customer modal submit — creates the order ────────────────────────────────
 
-export async function handleModalSubmit(
+export async function handleCustomerModal(
   interaction: ModalSubmitInteraction,
 ): Promise<void> {
-  if (!interaction.customId.startsWith("zamow_modal_")) return;
-
   await interaction.deferReply({ ephemeral: true });
 
   const orderType = interaction.customId.replace("zamow_modal_", "") as
@@ -98,7 +96,6 @@ export async function handleModalSubmit(
       ? interaction.fields.getTextInputValue("address").trim()
       : null;
 
-  // Validate PESEL — must be exactly 11 digits
   if (!/^\d{11}$/.test(pesel)) {
     await interaction.editReply("❌ PESEL musi zawierać dokładnie 11 cyfr (same liczby).");
     return;
@@ -113,7 +110,6 @@ export async function handleModalSubmit(
     return;
   }
 
-  // Determine target channel
   const rawChannelId = ORDERS_CHANNEL_ID ?? interaction.channelId;
   if (!rawChannelId) {
     await interaction.editReply(
@@ -122,6 +118,7 @@ export async function handleModalSubmit(
     return;
   }
   const channelId: string = rawChannelId;
+
   const targetChannel = await interaction.client.channels
     .fetch(channelId)
     .catch(() => null);
@@ -133,7 +130,6 @@ export async function handleModalSubmit(
     return;
   }
 
-  // Create order record
   const [order] = await db
     .insert(ordersTable)
     .values({
@@ -155,7 +151,6 @@ export async function handleModalSubmit(
     return;
   }
 
-  // Post embed to the orders channel
   const message = await targetChannel.send({
     embeds: [buildOrderEmbed(order)],
     components: buildOrderComponents(order),
@@ -171,6 +166,117 @@ export async function handleModalSubmit(
   );
 
   logger.info({ orderId: order.id, customerId, orderType, guildId }, "Order created");
+}
+
+// ─── Worker confirm modal — sets price and confirms ──────────────────────────
+
+export async function handleWorkerConfirmModal(
+  interaction: ModalSubmitInteraction,
+): Promise<void> {
+  const orderId = parseInt(
+    interaction.customId.replace("worker_confirm_", ""),
+    10,
+  );
+  if (isNaN(orderId)) return;
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const priceRaw = interaction.fields
+    .getTextInputValue("price")
+    .trim()
+    .replace(",", ".");
+  const priceNum = parseFloat(priceRaw);
+
+  if (isNaN(priceNum) || priceNum <= 0) {
+    await interaction.editReply("❌ Podaj prawidłową kwotę (np. 45.00 lub 45,00).");
+    return;
+  }
+
+  const priceFormatted =
+    priceNum.toFixed(2).replace(".", ",") + " zł";
+
+  const userId = interaction.user.id;
+  const userName = interaction.user.displayName || interaction.user.username;
+
+  const [order] = await db
+    .select()
+    .from(ordersTable)
+    .where(eq(ordersTable.id, orderId));
+
+  if (!order || order.status !== "pending") {
+    await interaction.editReply(
+      "❌ Zamówienie nie istnieje lub zostało już przetworzone.",
+    );
+    return;
+  }
+
+  const [updated] = await db
+    .update(ordersTable)
+    .set({
+      status: "confirmed",
+      workerId: userId,
+      workerName: userName,
+      price: priceFormatted,
+    })
+    .where(eq(ordersTable.id, orderId))
+    .returning();
+
+  if (!updated) {
+    await interaction.editReply("❌ Błąd podczas aktualizacji zamówienia.");
+    return;
+  }
+
+  // Edit the original order card in the channel
+  if (order.messageId) {
+    try {
+      const channel = await interaction.client.channels.fetch(order.channelId).catch(() => null);
+      if (channel?.type === ChannelType.GuildText) {
+        const msg = await channel.messages.fetch(order.messageId).catch(() => null);
+        if (msg) {
+          await msg.edit({
+            embeds: [buildOrderEmbed(updated)],
+            components: buildOrderComponents(updated),
+          });
+        }
+      }
+    } catch {
+      // Message may have been deleted — not fatal
+    }
+  }
+
+  // DM to customer with price
+  try {
+    const customer = await interaction.client.users.fetch(order.customerId);
+    const typeLabel = order.orderType === "na_dostawe" ? "🚚 Dostawa" : "🪑 Na miejscu";
+    await customer.send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("✅ Twoje zamówienie zostało przyjęte!")
+          .setDescription(`**Zamówienie #${orderId}:**\n> ${order.description}`)
+          .setColor(0xf39c12)
+          .addFields(
+            { name: "🛎️ Typ", value: typeLabel, inline: true },
+            { name: "👷 Pracownik", value: userName, inline: true },
+            { name: "💰 Kwota do zapłaty", value: priceFormatted, inline: true },
+            { name: "📊 Status", value: "🟡 W przygotowaniu", inline: true },
+          )
+          .setTimestamp()
+          .setFooter({
+            text: "Otrzymasz kolejną wiadomość, gdy kurier odbierze zamówienie.",
+          }),
+      ],
+    });
+  } catch {
+    logger.info(
+      { orderId, customerId: order.customerId },
+      "Nie udało się wysłać DM do klienta (wyłączone PW?)",
+    );
+  }
+
+  await interaction.editReply(
+    `✅ Zamówienie **#${orderId}** potwierdzone. Kwota: **${priceFormatted}**`,
+  );
+  logger.info({ orderId, workerId: userId, price: priceFormatted }, "Order confirmed");
 }
 
 // ─── /zamowienia — list active orders ────────────────────────────────────────
@@ -207,16 +313,27 @@ export async function handleZamowienia(
   const lines = orders.map((o) => {
     const emoji = statusEmoji[o.status] ?? "⚪";
     const desc =
-      o.description.length > 50
-        ? o.description.substring(0, 47) + "…"
-        : o.description;
+      o.description.length > 50 ? o.description.substring(0, 47) + "…" : o.description;
     const type = o.orderType === "na_dostawe" ? "🚚" : "🪑";
-    return `${emoji}${type} **#${o.id}** — ${desc} *(${o.customerFullName})*`;
+    const price = o.price ? ` · **${o.price}**` : "";
+    return `${emoji}${type} **#${o.id}** — ${desc} *(${o.customerFullName})*${price}`;
   });
 
   await interaction.editReply(
     `📋 **Aktywne zamówienia (${orders.length}):**\n${lines.join("\n")}`,
   );
+}
+
+// ─── Modal submit router ──────────────────────────────────────────────────────
+
+export async function handleModalSubmit(
+  interaction: ModalSubmitInteraction,
+): Promise<void> {
+  if (interaction.customId.startsWith("zamow_modal_")) {
+    await handleCustomerModal(interaction);
+  } else if (interaction.customId.startsWith("worker_confirm_")) {
+    await handleWorkerConfirmModal(interaction);
+  }
 }
 
 // ─── Button interactions ──────────────────────────────────────────────────────
@@ -245,6 +362,27 @@ export async function handleButtonInteraction(
   const orderId = parseInt(orderIdStr, 10);
   if (isNaN(orderId)) return;
 
+  // Confirm shows a modal — must be the initial response (no deferUpdate)
+  if (action === "confirm") {
+    const modal = new ModalBuilder()
+      .setCustomId(`worker_confirm_${orderId}`)
+      .setTitle(`💰 Zamówienie #${orderId} — wpisz kwotę`)
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("price")
+            .setLabel("Kwota za zamówienie (zł)")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(20)
+            .setPlaceholder("np. 45,00"),
+        ),
+      );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  // For deliver and complete, defer then update
   await interaction.deferUpdate();
 
   const [order] = await db
@@ -260,50 +398,7 @@ export async function handleButtonInteraction(
   const userId = interaction.user.id;
   const userName = interaction.user.displayName || interaction.user.username;
 
-  if (action === "confirm" && order.status === "pending") {
-    const [updated] = await db
-      .update(ordersTable)
-      .set({ status: "confirmed", workerId: userId, workerName: userName })
-      .where(eq(ordersTable.id, orderId))
-      .returning();
-
-    if (updated) {
-      await interaction.editReply({
-        embeds: [buildOrderEmbed(updated)],
-        components: buildOrderComponents(updated),
-      });
-
-      // DM to customer
-      try {
-        const customer = await interaction.client.users.fetch(order.customerId);
-        const typeLabel = order.orderType === "na_dostawe" ? "🚚 Dostawa" : "🪑 Na miejscu";
-        await customer.send({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle("✅ Twoje zamówienie zostało przyjęte!")
-              .setDescription(`**Zamówienie #${orderId}:**\n> ${order.description}`)
-              .setColor(0xf39c12)
-              .addFields(
-                { name: "🛎️ Typ", value: typeLabel, inline: true },
-                { name: "👷 Pracownik", value: userName, inline: true },
-                { name: "📊 Status", value: "🟡 W przygotowaniu", inline: true },
-              )
-              .setTimestamp()
-              .setFooter({
-                text: "Otrzymasz kolejną wiadomość, gdy kurier odbierze zamówienie.",
-              }),
-          ],
-        });
-      } catch {
-        logger.info(
-          { orderId, customerId: order.customerId },
-          "Nie udało się wysłać DM do klienta (wyłączone PW?)",
-        );
-      }
-
-      logger.info({ orderId, workerId: userId }, "Order confirmed by worker");
-    }
-  } else if (action === "deliver" && order.status === "confirmed") {
+  if (action === "deliver" && order.status === "confirmed") {
     if (order.workerId === userId) {
       await interaction.followUp({
         content: "❌ Pracownik nie może być jednocześnie kurierem tego zamówienia.",
@@ -328,7 +423,8 @@ export async function handleButtonInteraction(
   } else if (action === "complete" && order.status === "in_delivery") {
     if (order.courierId !== userId) {
       await interaction.followUp({
-        content: "❌ Tylko kurier przypisany do tego zamówienia może oznaczyć je jako dostarczone.",
+        content:
+          "❌ Tylko kurier przypisany do tego zamówienia może oznaczyć je jako dostarczone.",
         ephemeral: true,
       });
       return;
