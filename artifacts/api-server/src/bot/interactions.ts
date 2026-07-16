@@ -399,14 +399,6 @@ export async function handleButtonInteraction(
   const userName = interaction.user.displayName || interaction.user.username;
 
   if (action === "deliver" && order.status === "confirmed") {
-    if (order.workerId === userId) {
-      await interaction.followUp({
-        content: "❌ Pracownik nie może być jednocześnie kurierem tego zamówienia.",
-        ephemeral: true,
-      });
-      return;
-    }
-
     const [updated] = await db
       .update(ordersTable)
       .set({ status: "in_delivery", courierId: userId, courierName: userName })
