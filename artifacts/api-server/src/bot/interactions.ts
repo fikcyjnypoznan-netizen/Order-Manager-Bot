@@ -1,8 +1,13 @@
 import {
   type ChatInputCommandInteraction,
   type ButtonInteraction,
+  type ModalSubmitInteraction,
   ChannelType,
   EmbedBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder,
 } from "discord.js";
 import { db, ordersTable } from "@workspace/db";
 import { eq, and, ne } from "drizzle-orm";
@@ -11,15 +16,96 @@ import { logger } from "../lib/logger.js";
 
 const ORDERS_CHANNEL_ID = process.env["DISCORD_ORDERS_CHANNEL_ID"];
 
+// ─── /zamow — shows modal form ───────────────────────────────────────────────
+
 export async function handleZamow(
   interaction: ChatInputCommandInteraction,
 ): Promise<void> {
+  const orderType = interaction.options.getString("typ", true) as
+    | "na_miejscu"
+    | "na_dostawe";
+
+  const isDelivery = orderType === "na_dostawe";
+
+  const modal = new ModalBuilder()
+    .setCustomId(`zamow_modal_${orderType}`)
+    .setTitle(isDelivery ? "🚚 Zamówienie — dostawa" : "🪑 Zamówienie — na miejscu");
+
+  const nameInput = new TextInputBuilder()
+    .setCustomId("full_name")
+    .setLabel("Imię i nazwisko")
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(100)
+    .setPlaceholder("Jan Kowalski");
+
+  const peselInput = new TextInputBuilder()
+    .setCustomId("pesel")
+    .setLabel("PESEL")
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMinLength(11)
+    .setMaxLength(11)
+    .setPlaceholder("12345678901");
+
+  const descInput = new TextInputBuilder()
+    .setCustomId("description")
+    .setLabel("Opis zamówienia")
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true)
+    .setMaxLength(500)
+    .setPlaceholder("Np. Duże frytki, cola, hamburger z serem...");
+
+  const rows: ActionRowBuilder<TextInputBuilder>[] = [
+    new ActionRowBuilder<TextInputBuilder>().addComponents(nameInput),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(peselInput),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(descInput),
+  ];
+
+  if (isDelivery) {
+    const addressInput = new TextInputBuilder()
+      .setCustomId("address")
+      .setLabel("Adres dostawy")
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true)
+      .setMaxLength(200)
+      .setPlaceholder("ul. Przykładowa 1/2, 00-000 Warszawa");
+    rows.push(new ActionRowBuilder<TextInputBuilder>().addComponents(addressInput));
+  }
+
+  modal.addComponents(...rows);
+  await interaction.showModal(modal);
+}
+
+// ─── Modal submit — creates the order ────────────────────────────────────────
+
+export async function handleModalSubmit(
+  interaction: ModalSubmitInteraction,
+): Promise<void> {
+  if (!interaction.customId.startsWith("zamow_modal_")) return;
+
   await interaction.deferReply({ ephemeral: true });
 
-  const description = interaction.options.getString("opis", true);
+  const orderType = interaction.customId.replace("zamow_modal_", "") as
+    | "na_miejscu"
+    | "na_dostawe";
+
+  const fullName = interaction.fields.getTextInputValue("full_name").trim();
+  const pesel = interaction.fields.getTextInputValue("pesel").trim();
+  const description = interaction.fields.getTextInputValue("description").trim();
+  const address =
+    orderType === "na_dostawe"
+      ? interaction.fields.getTextInputValue("address").trim()
+      : null;
+
+  // Validate PESEL — must be exactly 11 digits
+  if (!/^\d{11}$/.test(pesel)) {
+    await interaction.editReply("❌ PESEL musi zawierać dokładnie 11 cyfr (same liczby).");
+    return;
+  }
+
   const customerId = interaction.user.id;
-  const customerName =
-    interaction.user.displayName || interaction.user.username;
+  const customerName = interaction.user.displayName || interaction.user.username;
   const guildId = interaction.guildId;
 
   if (!guildId) {
@@ -27,29 +113,25 @@ export async function handleZamow(
     return;
   }
 
-  // Determine target channel for the order embed
-  let channelId: string;
-
-  if (ORDERS_CHANNEL_ID) {
-    channelId = ORDERS_CHANNEL_ID;
-  } else {
-    channelId = interaction.channelId;
+  // Determine target channel
+  const rawChannelId = ORDERS_CHANNEL_ID ?? interaction.channelId;
+  if (!rawChannelId) {
+    await interaction.editReply(
+      "❌ Nie znaleziono kanału zamówień. Skontaktuj się z administratorem.",
+    );
+    return;
   }
-
+  const channelId: string = rawChannelId;
   const targetChannel = await interaction.client.channels
     .fetch(channelId)
     .catch(() => null);
 
   if (!targetChannel || targetChannel.type !== ChannelType.GuildText) {
     await interaction.editReply(
-      "❌ Nie znaleziono kanału zamówień. Skontaktuj się z administratorem (ustaw DISCORD_ORDERS_CHANNEL_ID).",
+      "❌ Nie znaleziono kanału zamówień. Skontaktuj się z administratorem.",
     );
     return;
   }
-
-  const orderType = interaction.options.getString("typ", true) as
-    | "na_miejscu"
-    | "na_dostawe";
 
   // Create order record
   const [order] = await db
@@ -57,8 +139,11 @@ export async function handleZamow(
     .values({
       customerId,
       customerName,
+      customerFullName: fullName,
+      pesel,
       description,
       orderType,
+      deliveryAddress: address,
       channelId,
       guildId,
       status: "pending",
@@ -76,7 +161,6 @@ export async function handleZamow(
     components: buildOrderComponents(order),
   });
 
-  // Save messageId so we can edit it later
   await db
     .update(ordersTable)
     .set({ messageId: message.id })
@@ -86,8 +170,10 @@ export async function handleZamow(
     `✅ Zamówienie **#${order.id}** zostało złożone! Czeka na potwierdzenie przez pracownika.`,
   );
 
-  logger.info({ orderId: order.id, customerId, guildId }, "Order created");
+  logger.info({ orderId: order.id, customerId, orderType, guildId }, "Order created");
 }
+
+// ─── /zamowienia — list active orders ────────────────────────────────────────
 
 export async function handleZamowienia(
   interaction: ChatInputCommandInteraction,
@@ -103,12 +189,7 @@ export async function handleZamowienia(
   const orders = await db
     .select()
     .from(ordersTable)
-    .where(
-      and(
-        eq(ordersTable.guildId, guildId),
-        ne(ordersTable.status, "delivered"),
-      ),
-    )
+    .where(and(eq(ordersTable.guildId, guildId), ne(ordersTable.status, "delivered")))
     .orderBy(ordersTable.createdAt);
 
   if (orders.length === 0) {
@@ -125,16 +206,20 @@ export async function handleZamowienia(
 
   const lines = orders.map((o) => {
     const emoji = statusEmoji[o.status] ?? "⚪";
-    const desc = o.description.length > 50
-      ? o.description.substring(0, 47) + "…"
-      : o.description;
-    return `${emoji} **#${o.id}** — ${desc} *(${o.customerName})*`;
+    const desc =
+      o.description.length > 50
+        ? o.description.substring(0, 47) + "…"
+        : o.description;
+    const type = o.orderType === "na_dostawe" ? "🚚" : "🪑";
+    return `${emoji}${type} **#${o.id}** — ${desc} *(${o.customerFullName})*`;
   });
 
   await interaction.editReply(
     `📋 **Aktywne zamówienia (${orders.length}):**\n${lines.join("\n")}`,
   );
 }
+
+// ─── Button interactions ──────────────────────────────────────────────────────
 
 export async function handleButtonInteraction(
   interaction: ButtonInteraction,
@@ -168,16 +253,12 @@ export async function handleButtonInteraction(
     .where(eq(ordersTable.id, orderId));
 
   if (!order) {
-    await interaction.followUp({
-      content: "❌ Nie znaleziono zamówienia.",
-      ephemeral: true,
-    });
+    await interaction.followUp({ content: "❌ Nie znaleziono zamówienia.", ephemeral: true });
     return;
   }
 
   const userId = interaction.user.id;
-  const userName =
-    interaction.user.displayName || interaction.user.username;
+  const userName = interaction.user.displayName || interaction.user.username;
 
   if (action === "confirm" && order.status === "pending") {
     const [updated] = await db
@@ -192,11 +273,10 @@ export async function handleButtonInteraction(
         components: buildOrderComponents(updated),
       });
 
-      // Send DM to customer
+      // DM to customer
       try {
         const customer = await interaction.client.users.fetch(order.customerId);
-        const orderTypeLabel =
-          order.orderType === "na_dostawe" ? "🚚 Dostawa" : "🪑 Na miejscu";
+        const typeLabel = order.orderType === "na_dostawe" ? "🚚 Dostawa" : "🪑 Na miejscu";
         await customer.send({
           embeds: [
             new EmbedBuilder()
@@ -204,16 +284,17 @@ export async function handleButtonInteraction(
               .setDescription(`**Zamówienie #${orderId}:**\n> ${order.description}`)
               .setColor(0xf39c12)
               .addFields(
-                { name: "🛎️ Typ", value: orderTypeLabel, inline: true },
+                { name: "🛎️ Typ", value: typeLabel, inline: true },
                 { name: "👷 Pracownik", value: userName, inline: true },
                 { name: "📊 Status", value: "🟡 W przygotowaniu", inline: true },
               )
               .setTimestamp()
-              .setFooter({ text: "Otrzymasz kolejną wiadomość, gdy kurier odbierze zamówienie." }),
+              .setFooter({
+                text: "Otrzymasz kolejną wiadomość, gdy kurier odbierze zamówienie.",
+              }),
           ],
         });
       } catch {
-        // Customer may have DMs disabled — not a fatal error
         logger.info(
           { orderId, customerId: order.customerId },
           "Nie udało się wysłać DM do klienta (wyłączone PW?)",
@@ -247,8 +328,7 @@ export async function handleButtonInteraction(
   } else if (action === "complete" && order.status === "in_delivery") {
     if (order.courierId !== userId) {
       await interaction.followUp({
-        content:
-          "❌ Tylko kurier przypisany do tego zamówienia może oznaczyć je jako dostarczone.",
+        content: "❌ Tylko kurier przypisany do tego zamówienia może oznaczyć je jako dostarczone.",
         ephemeral: true,
       });
       return;
@@ -269,8 +349,7 @@ export async function handleButtonInteraction(
     }
   } else {
     await interaction.followUp({
-      content:
-        "❌ Ta akcja nie jest możliwa w obecnym stanie zamówienia.",
+      content: "❌ Ta akcja nie jest możliwa w obecnym stanie zamówienia.",
       ephemeral: true,
     });
   }

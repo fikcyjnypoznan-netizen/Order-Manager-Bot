@@ -4,6 +4,7 @@ import { commands } from "./commands.js";
 import {
   handleZamow,
   handleZamowienia,
+  handleModalSubmit,
   handleButtonInteraction,
 } from "./interactions.js";
 import { logger } from "../lib/logger.js";
@@ -19,42 +20,32 @@ export async function startBot(): Promise<void> {
   }
 
   if (!clientId) {
-    logger.warn(
-      "DISCORD_CLIENT_ID nie ustawiony — rejestracja komend pominięta",
-    );
+    logger.warn("DISCORD_CLIENT_ID nie ustawiony — rejestracja komend pominięta");
   } else {
-    // Register slash commands
     const rest = new REST().setToken(token);
     const commandData = commands.map((c) => c.toJSON());
 
     try {
       if (guildId) {
-        // Guild-specific = instant registration (ideal for dev/prod)
-        await rest.put(
-          Routes.applicationGuildCommands(clientId, guildId),
-          { body: commandData },
-        );
+        await rest.put(Routes.applicationGuildCommands(clientId, guildId), {
+          body: commandData,
+        });
         logger.info({ guildId }, "Zarejestrowano komendy dla serwera");
       } else {
-        // Global = up to 1 hour propagation
         await rest.put(Routes.applicationCommands(clientId), {
           body: commandData,
         });
-        logger.info(
-          "Zarejestrowano globalne komendy (może potrwać do 1 godz.)",
-        );
+        logger.info("Zarejestrowano globalne komendy (może potrwać do 1 godz.)");
       }
     } catch (err) {
       logger.error({ err }, "Błąd rejestracji komend slash");
     }
   }
 
-  // Bot ready
   client.once(Events.ClientReady, (c) => {
     logger.info({ tag: c.user.tag }, "Bot Discord gotowy");
   });
 
-  // Handle all interactions
   client.on(Events.InteractionCreate, async (interaction: Interaction) => {
     try {
       if (interaction.isChatInputCommand()) {
@@ -66,19 +57,16 @@ export async function startBot(): Promise<void> {
             await handleZamowienia(interaction);
             break;
         }
+      } else if (interaction.isModalSubmit()) {
+        await handleModalSubmit(interaction);
       } else if (interaction.isButton()) {
         await handleButtonInteraction(interaction);
       }
     } catch (err) {
       logger.error({ err }, "Błąd podczas obsługi interakcji");
-
-      // Try to respond if not already done
       if (interaction.isRepliable() && !interaction.replied) {
         await interaction
-          .reply({
-            content: "❌ Wystąpił błąd. Spróbuj ponownie.",
-            ephemeral: true,
-          })
+          .reply({ content: "❌ Wystąpił błąd. Spróbuj ponownie.", ephemeral: true })
           .catch(() => {});
       }
     }

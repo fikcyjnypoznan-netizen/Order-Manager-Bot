@@ -6,13 +6,6 @@ export const commands = [
     .setDescription("Złóż nowe zamówienie")
     .addStringOption((opt) =>
       opt
-        .setName("opis")
-        .setDescription("Opis zamówienia (max 500 znaków)")
-        .setRequired(true)
-        .setMaxLength(500),
-    )
-    .addStringOption((opt) =>
-      opt
         .setName("typ")
         .setDescription("Sposób realizacji zamówienia")
         .setRequired(true)

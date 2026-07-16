@@ -7,10 +7,10 @@ import {
 import type { Order } from "@workspace/db";
 
 const STATUS_COLORS: Record<Order["status"], number> = {
-  pending: 0x3498db,    // niebieski
-  confirmed: 0xf39c12,  // żółty
+  pending: 0x3498db,     // niebieski
+  confirmed: 0xf39c12,   // żółty
   in_delivery: 0xe67e22, // pomarańczowy
-  delivered: 0x2ecc71,  // zielony
+  delivered: 0x2ecc71,   // zielony
 };
 
 const STATUS_LABELS: Record<Order["status"], string> = {
@@ -31,27 +31,25 @@ export function buildOrderEmbed(order: Order): EmbedBuilder {
     .setDescription(`> ${order.description}`)
     .setColor(STATUS_COLORS[order.status])
     .addFields(
-      { name: "👤 Klient", value: order.customerName, inline: true },
+      { name: "👤 Klient (Discord)", value: order.customerName, inline: true },
+      { name: "🪪 Imię i nazwisko", value: order.customerFullName, inline: true },
+      { name: "🆔 PESEL", value: order.pesel, inline: true },
       { name: "🛎️ Typ", value: ORDER_TYPE_LABELS[order.orderType], inline: true },
       { name: "📊 Status", value: STATUS_LABELS[order.status], inline: true },
     )
     .setTimestamp(order.createdAt)
     .setFooter({ text: `ID: ${order.id}` });
 
+  if (order.orderType === "na_dostawe" && order.deliveryAddress) {
+    embed.addFields({ name: "📍 Adres dostawy", value: order.deliveryAddress, inline: false });
+  }
+
   if (order.workerId && order.workerName) {
-    embed.addFields({
-      name: "👷 Pracownik",
-      value: order.workerName,
-      inline: true,
-    });
+    embed.addFields({ name: "👷 Pracownik", value: order.workerName, inline: true });
   }
 
   if (order.courierId && order.courierName) {
-    embed.addFields({
-      name: "🚚 Kurier",
-      value: order.courierName,
-      inline: true,
-    });
+    embed.addFields({ name: "🚚 Kurier", value: order.courierName, inline: true });
   }
 
   return embed;
