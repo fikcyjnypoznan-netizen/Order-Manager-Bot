@@ -15,6 +15,11 @@ export const orderStatusEnum = pgEnum("order_status", [
   "delivered",
 ]);
 
+export const orderTypeEnum = pgEnum("order_type", [
+  "na_miejscu",
+  "na_dostawe",
+]);
+
 export const ordersTable = pgTable("orders", {
   id: serial("id").primaryKey(),
   customerId: text("customer_id").notNull(),
@@ -27,6 +32,7 @@ export const ordersTable = pgTable("orders", {
   courierName: text("courier_name"),
   messageId: text("message_id"),
   channelId: text("channel_id").notNull(),
+  orderType: orderTypeEnum("order_type").notNull().default("na_miejscu"),
   guildId: text("guild_id").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()

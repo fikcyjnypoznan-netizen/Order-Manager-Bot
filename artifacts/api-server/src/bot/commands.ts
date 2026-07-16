@@ -10,6 +10,16 @@ export const commands = [
         .setDescription("Opis zamówienia (max 500 znaków)")
         .setRequired(true)
         .setMaxLength(500),
+    )
+    .addStringOption((opt) =>
+      opt
+        .setName("typ")
+        .setDescription("Sposób realizacji zamówienia")
+        .setRequired(true)
+        .addChoices(
+          { name: "🪑 Na miejscu", value: "na_miejscu" },
+          { name: "🚚 Dostawa", value: "na_dostawe" },
+        ),
     ),
 
   new SlashCommandBuilder()

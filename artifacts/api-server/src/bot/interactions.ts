@@ -2,6 +2,7 @@ import {
   type ChatInputCommandInteraction,
   type ButtonInteraction,
   ChannelType,
+  EmbedBuilder,
 } from "discord.js";
 import { db, ordersTable } from "@workspace/db";
 import { eq, and, ne } from "drizzle-orm";
@@ -46,6 +47,10 @@ export async function handleZamow(
     return;
   }
 
+  const orderType = interaction.options.getString("typ", true) as
+    | "na_miejscu"
+    | "na_dostawe";
+
   // Create order record
   const [order] = await db
     .insert(ordersTable)
@@ -53,6 +58,7 @@ export async function handleZamow(
       customerId,
       customerName,
       description,
+      orderType,
       channelId,
       guildId,
       status: "pending",
@@ -185,6 +191,35 @@ export async function handleButtonInteraction(
         embeds: [buildOrderEmbed(updated)],
         components: buildOrderComponents(updated),
       });
+
+      // Send DM to customer
+      try {
+        const customer = await interaction.client.users.fetch(order.customerId);
+        const orderTypeLabel =
+          order.orderType === "na_dostawe" ? "🚚 Dostawa" : "🪑 Na miejscu";
+        await customer.send({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle("✅ Twoje zamówienie zostało przyjęte!")
+              .setDescription(`**Zamówienie #${orderId}:**\n> ${order.description}`)
+              .setColor(0xf39c12)
+              .addFields(
+                { name: "🛎️ Typ", value: orderTypeLabel, inline: true },
+                { name: "👷 Pracownik", value: userName, inline: true },
+                { name: "📊 Status", value: "🟡 W przygotowaniu", inline: true },
+              )
+              .setTimestamp()
+              .setFooter({ text: "Otrzymasz kolejną wiadomość, gdy kurier odbierze zamówienie." }),
+          ],
+        });
+      } catch {
+        // Customer may have DMs disabled — not a fatal error
+        logger.info(
+          { orderId, customerId: order.customerId },
+          "Nie udało się wysłać DM do klienta (wyłączone PW?)",
+        );
+      }
+
       logger.info({ orderId, workerId: userId }, "Order confirmed by worker");
     }
   } else if (action === "deliver" && order.status === "confirmed") {

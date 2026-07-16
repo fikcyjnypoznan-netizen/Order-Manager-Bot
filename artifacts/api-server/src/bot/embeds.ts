@@ -20,6 +20,11 @@ const STATUS_LABELS: Record<Order["status"], string> = {
   delivered: "🟢 Dostarczone",
 };
 
+const ORDER_TYPE_LABELS: Record<Order["orderType"], string> = {
+  na_miejscu: "🪑 Na miejscu",
+  na_dostawe: "🚚 Dostawa",
+};
+
 export function buildOrderEmbed(order: Order): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setTitle(`📦 Zamówienie #${order.id}`)
@@ -27,6 +32,7 @@ export function buildOrderEmbed(order: Order): EmbedBuilder {
     .setColor(STATUS_COLORS[order.status])
     .addFields(
       { name: "👤 Klient", value: order.customerName, inline: true },
+      { name: "🛎️ Typ", value: ORDER_TYPE_LABELS[order.orderType], inline: true },
       { name: "📊 Status", value: STATUS_LABELS[order.status], inline: true },
     )
     .setTimestamp(order.createdAt)
