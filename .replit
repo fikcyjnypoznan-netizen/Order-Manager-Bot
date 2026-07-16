@@ -18,3 +18,10 @@ expertMode = true
 [postMerge]
 path = "scripts/post-merge.sh"
 timeoutMs = 20000
+
+[userenv]
+
+[userenv.shared]
+DISCORD_CLIENT_ID = "1527413766017253497"
+DISCORD_GUILD_ID = "1196129310973644920"
+DISCORD_ORDERS_CHANNEL_ID = "1527414285662294036"
