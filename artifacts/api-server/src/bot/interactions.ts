@@ -422,9 +422,15 @@ export async function handleButtonInteraction(
       return;
     }
 
+    const discountCode = Array.from({ length: 5 }, () =>
+      "ABCDEFGHJKLMNPQRSTUVWXYZ123456789"[
+        Math.floor(Math.random() * 33)
+      ]
+    ).join("");
+
     const [updated] = await db
       .update(ordersTable)
-      .set({ status: "delivered" })
+      .set({ status: "delivered", discountCode })
       .where(eq(ordersTable.id, orderId))
       .returning();
 
@@ -433,7 +439,41 @@ export async function handleButtonInteraction(
         embeds: [buildOrderEmbed(updated)],
         components: [],
       });
-      logger.info({ orderId }, "Order delivered");
+
+      // DM to customer with thank-you + discount code
+      try {
+        const customer = await interaction.client.users.fetch(order.customerId);
+        await customer.send({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle("🎉 Dziękujemy za zakup!")
+              .setDescription(
+                "Dziękujemy za zaufanie i zakup w naszej restauracji.\nZ tej okazji oferujemy kod na kolejne zamówienie **-20%**.",
+              )
+              .setColor(0x2ecc71)
+              .addFields({
+                name: "🎟️ Twój kod rabatowy",
+                value: `\`\`\`${discountCode}\`\`\``,
+                inline: false,
+              })
+              .setTimestamp()
+              .setFooter({ text: "Kod jednorazowy · do wykorzystania przy następnym zamówieniu" }),
+          ],
+        });
+      } catch {
+        logger.info(
+          { orderId, customerId: order.customerId },
+          "Nie udało się wysłać DM z kodem rabatowym (wyłączone PW?)",
+        );
+      }
+
+      // Notify the courier/worker about the generated code
+      await interaction.followUp({
+        content: `✅ Zamówienie **#${orderId}** dostarczone.\n🎟️ Kod rabatowy dla klienta: \`${discountCode}\``,
+        ephemeral: true,
+      });
+
+      logger.info({ orderId, discountCode }, "Order delivered, discount code generated");
     }
   } else {
     await interaction.followUp({

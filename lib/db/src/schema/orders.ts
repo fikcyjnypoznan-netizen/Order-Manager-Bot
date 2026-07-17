@@ -30,6 +30,7 @@ export const ordersTable = pgTable("orders", {
   pesel: text("pesel").notNull(),
   deliveryAddress: text("delivery_address"),
   price: text("price"),
+  discountCode: text("discount_code"),
   workerId: text("worker_id"),
   workerName: text("worker_name"),
   courierId: text("courier_id"),
