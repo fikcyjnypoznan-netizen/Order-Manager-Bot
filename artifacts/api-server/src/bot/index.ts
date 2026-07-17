@@ -4,8 +4,11 @@ import { commands } from "./commands.js";
 import {
   handleZamow,
   handleZamowienia,
+  handleMenu,
+  handleKody,
   handleModalSubmit,
   handleButtonInteraction,
+  handleDishSelect,
 } from "./interactions.js";
 import { logger } from "../lib/logger.js";
 
@@ -27,14 +30,10 @@ export async function startBot(): Promise<void> {
 
     try {
       if (guildId) {
-        await rest.put(Routes.applicationGuildCommands(clientId, guildId), {
-          body: commandData,
-        });
+        await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commandData });
         logger.info({ guildId }, "Zarejestrowano komendy dla serwera");
       } else {
-        await rest.put(Routes.applicationCommands(clientId), {
-          body: commandData,
-        });
+        await rest.put(Routes.applicationCommands(clientId), { body: commandData });
         logger.info("Zarejestrowano globalne komendy (może potrwać do 1 godz.)");
       }
     } catch (err) {
@@ -56,11 +55,21 @@ export async function startBot(): Promise<void> {
           case "zamowienia":
             await handleZamowienia(interaction);
             break;
+          case "menu":
+            await handleMenu(interaction);
+            break;
+          case "kody":
+            await handleKody(interaction);
+            break;
         }
       } else if (interaction.isModalSubmit()) {
         await handleModalSubmit(interaction);
       } else if (interaction.isButton()) {
         await handleButtonInteraction(interaction);
+      } else if (interaction.isStringSelectMenu()) {
+        if (interaction.customId.startsWith("dish_select|")) {
+          await handleDishSelect(interaction);
+        }
       }
     } catch (err) {
       logger.error({ err }, "Błąd podczas obsługi interakcji");

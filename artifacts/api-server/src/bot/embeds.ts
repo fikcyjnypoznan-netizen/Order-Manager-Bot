@@ -5,6 +5,7 @@ import {
   ButtonStyle,
 } from "discord.js";
 import type { Order } from "@workspace/db";
+import { MENU_ITEMS } from "./menu.js";
 
 const STATUS_COLORS: Record<Order["status"], number> = {
   pending: 0x3498db,     // niebieski
@@ -25,6 +26,21 @@ const ORDER_TYPE_LABELS: Record<Order["orderType"], string> = {
   na_dostawe: "🚚 Dostawa",
 };
 
+export function buildMenuEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setTitle("🍽️ Menu restauracji")
+    .setColor(0xe67e22)
+    .setDescription("Wybierz dania składając zamówienie przez `/zamow`.")
+    .addFields(
+      MENU_ITEMS.map((item) => ({
+        name: `${item.emoji} ${item.name}`,
+        value: `**${item.price} zł**`,
+        inline: true,
+      })),
+    )
+    .setFooter({ text: "Ceny brutto · menu może ulec zmianie" });
+}
+
 export function buildOrderEmbed(order: Order): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setTitle(`📦 Zamówienie #${order.id}`)
@@ -40,12 +56,24 @@ export function buildOrderEmbed(order: Order): EmbedBuilder {
     .setTimestamp(order.createdAt)
     .setFooter({ text: `ID: ${order.id}` });
 
+  if (order.appliedDiscountCode && order.appliedDiscountPercent) {
+    embed.addFields({
+      name: `🎫 Kod rabatowy klienta`,
+      value: `\`${order.appliedDiscountCode}\` — **-${order.appliedDiscountPercent}%**`,
+      inline: true,
+    });
+  }
+
   if (order.price) {
     embed.addFields({ name: "💰 Kwota", value: order.price, inline: true });
   }
 
   if (order.discountCode) {
-    embed.addFields({ name: "🎟️ Kod rabatowy (-20%)", value: `\`${order.discountCode}\``, inline: true });
+    embed.addFields({
+      name: "🎟️ Kod dla klienta (-20%)",
+      value: `\`${order.discountCode}\``,
+      inline: true,
+    });
   }
 
   if (order.orderType === "na_dostawe" && order.deliveryAddress) {

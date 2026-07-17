@@ -2,6 +2,7 @@ import {
   pgTable,
   serial,
   text,
+  integer,
   timestamp,
   pgEnum,
 } from "drizzle-orm/pg-core";
@@ -31,6 +32,8 @@ export const ordersTable = pgTable("orders", {
   deliveryAddress: text("delivery_address"),
   price: text("price"),
   discountCode: text("discount_code"),
+  appliedDiscountCode: text("applied_discount_code"),
+  appliedDiscountPercent: integer("applied_discount_percent"),
   workerId: text("worker_id"),
   workerName: text("worker_name"),
   courierId: text("courier_id"),
