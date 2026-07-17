@@ -2,7 +2,20 @@ modules = ["nodejs-24"]
 
 [deployment]
 router = "application"
-deploymentTarget = "autoscale"
+deploymentTarget = "vm"
+
+[deployment.build]
+args = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
+
+[deployment.build.env]
+NODE_ENV = "production"
+
+[deployment.run]
+args = ["node", "--enable-source-maps", "artifacts/api-server/dist/index.mjs"]
+
+[deployment.run.env]
+PORT = "8080"
+NODE_ENV = "production"
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
