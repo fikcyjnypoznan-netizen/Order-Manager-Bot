@@ -56,6 +56,10 @@ export function buildOrderEmbed(order: Order): EmbedBuilder {
     .setTimestamp(order.createdAt)
     .setFooter({ text: `ID: ${order.id}` });
 
+  if (order.suggestedPrice) {
+    embed.addFields({ name: "💡 Cena sugerowana", value: order.suggestedPrice, inline: true });
+  }
+
   if (order.appliedDiscountCode && order.appliedDiscountPercent) {
     embed.addFields({
       name: `🎫 Kod rabatowy klienta`,
@@ -65,7 +69,7 @@ export function buildOrderEmbed(order: Order): EmbedBuilder {
   }
 
   if (order.price) {
-    embed.addFields({ name: "💰 Kwota", value: order.price, inline: true });
+    embed.addFields({ name: "💰 Kwota końcowa", value: order.price, inline: true });
   }
 
   if (order.discountCode) {

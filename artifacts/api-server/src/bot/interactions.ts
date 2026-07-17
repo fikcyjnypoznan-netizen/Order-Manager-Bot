@@ -22,8 +22,10 @@ import { logger } from "../lib/logger.js";
 const ORDERS_CHANNEL_ID = process.env["DISCORD_ORDERS_CHANNEL_ID"];
 const MANAGER_ROLE_ID = "1527564304021196910";
 
-// In-memory: userId → selected dish IDs (cleared after modal submit or after 10 min)
-const pendingSelections = new Map<string, string[]>();
+// Max dishes selectable per order type (Discord modal limit: 5 fields)
+// na_miejscu: name(1) + pesel(1) + dishes(up to 3) [+ discount if room]
+// na_dostawe: name(1) + pesel(1) + address(1) + dishes(up to 2) [+ discount if room]
+const MAX_DISHES: Record<"m" | "d", number> = { m: 3, d: 2 };
 
 // ─── /menu ───────────────────────────────────────────────────────────────────
 
@@ -57,8 +59,9 @@ export async function handleZamow(
       })),
     );
 
+  // No dishes selected yet — dishes will be encoded in customId after selection
   const continueBtn = new ButtonBuilder()
-    .setCustomId(`zamow_continue|${typeKey}`)
+    .setCustomId(`zamow_continue|${typeKey}|`)
     .setLabel("Kontynuuj →")
     .setStyle(ButtonStyle.Primary);
 
@@ -81,12 +84,13 @@ export async function handleDishSelect(
   const orderType = typeKey === "d" ? "na_dostawe" : "na_miejscu";
   const selected = interaction.values;
 
-  pendingSelections.set(interaction.user.id, selected);
+  // Encode selected dishes directly in the button customId (no server state needed)
+  const dishesEncoded = selected.join(",");
 
   const names = selected
     .map((id) => getMenuItem(id))
-    .filter(Boolean)
-    .map((i) => `${i!.emoji} ${i!.name}`)
+    .filter((i): i is NonNullable<typeof i> => Boolean(i))
+    .map((i) => `${i.emoji} ${i.name}`)
     .join(", ");
 
   const selectMenu = new StringSelectMenuBuilder()
@@ -105,7 +109,7 @@ export async function handleDishSelect(
 
   const typeLabel = orderType === "na_dostawe" ? "🚚 Dostawa" : "🪑 Na miejscu";
   const continueBtn = new ButtonBuilder()
-    .setCustomId(`zamow_continue|${typeKey}`)
+    .setCustomId(`zamow_continue|${typeKey}|${dishesEncoded}`)
     .setLabel(`Kontynuuj → (${typeLabel})`)
     .setStyle(ButtonStyle.Primary);
 
@@ -123,9 +127,11 @@ export async function handleDishSelect(
 export async function handleZamowContinue(
   interaction: ButtonInteraction,
 ): Promise<void> {
-  const typeKey = interaction.customId.split("|")[1]!;
+  const parts = interaction.customId.split("|");
+  const typeKey = parts[1]!;
+  const dishesStr = parts[2] ?? "";
   const orderType = typeKey === "d" ? "na_dostawe" : "na_miejscu";
-  const selected = pendingSelections.get(interaction.user.id) ?? [];
+  const selected = dishesStr ? dishesStr.split(",") : [];
 
   if (selected.length === 0) {
     await interaction.reply({
@@ -136,8 +142,7 @@ export async function handleZamowContinue(
   }
 
   const dishNames = selected
-    .map((id) => getMenuItem(id)?.name)
-    .filter(Boolean)
+    .flatMap((id) => { const m = getMenuItem(id); return m ? [m.name] : []; })
     .join(", ");
 
   const qtyPlaceholder = selected.map(() => "1").join(", ");
@@ -193,8 +198,9 @@ export async function handleZamowContinue(
     rows.push(new ActionRowBuilder<TextInputBuilder>().addComponents(addressInput));
   }
 
+  // Encode selected dishes in modal customId so handleCustomerModal can read them
   const modal = new ModalBuilder()
-    .setCustomId(`zamow_modal|${typeKey}`)
+    .setCustomId(`zamow_modal|${typeKey}|${selected.join(",")}`)
     .setTitle(orderType === "na_dostawe" ? "🚚 Zamówienie — dostawa" : "🪑 Zamówienie — na miejscu")
     .addComponents(...rows);
 
@@ -208,7 +214,9 @@ export async function handleCustomerModal(
 ): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
-  const typeKey = interaction.customId.split("|")[1]!;
+  const modalParts = interaction.customId.split("|");
+  const typeKey = modalParts[1]!;
+  const dishesStr = modalParts[2] ?? "";
   const orderType: "na_miejscu" | "na_dostawe" =
     typeKey === "d" ? "na_dostawe" : "na_miejscu";
 
@@ -226,9 +234,8 @@ export async function handleCustomerModal(
     return;
   }
 
-  // Read selected dishes from pending Map
-  const selectedIds = pendingSelections.get(interaction.user.id) ?? [];
-  pendingSelections.delete(interaction.user.id);
+  // Dishes are encoded in the modal customId
+  const selectedIds = dishesStr ? dishesStr.split(",") : [];
 
   if (selectedIds.length === 0) {
     await interaction.editReply("❌ Nie wybrano żadnych dań. Spróbuj ponownie przez `/zamow`.");
@@ -277,6 +284,12 @@ export async function handleCustomerModal(
     appliedDiscountPercent = codeRow.percentage;
   }
 
+  // Calculate suggested price (with discount if applied)
+  const suggestedRaw = appliedDiscountPercent
+    ? totalPrice * (1 - appliedDiscountPercent / 100)
+    : totalPrice;
+  const suggestedPrice = suggestedRaw.toFixed(2).replace(".", ",") + " zł";
+
   const customerId = interaction.user.id;
   const customerName = interaction.user.displayName || interaction.user.username;
   const guildId = interaction.guildId;
@@ -311,6 +324,7 @@ export async function handleCustomerModal(
       deliveryAddress: address,
       appliedDiscountCode,
       appliedDiscountPercent,
+      suggestedPrice,
       channelId,
       guildId,
       status: "pending",
@@ -649,8 +663,15 @@ export async function handleButtonInteraction(
   const orderId = parseInt(orderIdStr, 10);
   if (isNaN(orderId)) return;
 
-  // Confirm shows a price modal
+  // Confirm shows a price modal — fetch order first to pre-fill suggested price
   if (action === "confirm") {
+    const [orderForModal] = await db
+      .select()
+      .from(ordersTable)
+      .where(eq(ordersTable.id, orderId));
+
+    const suggested = orderForModal?.suggestedPrice ?? "";
+
     const modal = new ModalBuilder()
       .setCustomId(`worker_confirm_${orderId}`)
       .setTitle(`💰 Zamówienie #${orderId} — wpisz kwotę`)
@@ -662,7 +683,8 @@ export async function handleButtonInteraction(
             .setStyle(TextInputStyle.Short)
             .setRequired(true)
             .setMaxLength(20)
-            .setPlaceholder("np. 45,00"),
+            .setPlaceholder("np. 45,00")
+            .setValue(suggested),
         ),
       );
     await interaction.showModal(modal);

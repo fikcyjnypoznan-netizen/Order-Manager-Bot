@@ -31,6 +31,7 @@ export const ordersTable = pgTable("orders", {
   pesel: text("pesel").notNull(),
   deliveryAddress: text("delivery_address"),
   price: text("price"),
+  suggestedPrice: text("suggested_price"),
   discountCode: text("discount_code"),
   appliedDiscountCode: text("applied_discount_code"),
   appliedDiscountPercent: integer("applied_discount_percent"),
