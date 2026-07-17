@@ -1,6 +1,5 @@
 [build]
-builder = "nixpacks"
-buildCommand = "pnpm install --no-frozen-lockfile && pnpm --filter @workspace/api-server run build"
+builder = "dockerfile"
 
 [deploy]
 startCommand = "sh scripts/railway-start.sh"
