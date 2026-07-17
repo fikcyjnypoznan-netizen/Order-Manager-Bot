@@ -33,3 +33,14 @@ timeoutMs = 20000
 DISCORD_CLIENT_ID = "1527413766017253497"
 DISCORD_GUILD_ID = "1196129310973644920"
 DISCORD_ORDERS_CHANNEL_ID = "1527414285662294036"
+
+[agent]
+expertMode = true
+
+[[ports]]
+localPort = 8080
+externalPort = 80
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
